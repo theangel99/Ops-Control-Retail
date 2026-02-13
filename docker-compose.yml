@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: opscontrol-mysql
+    environment:
+      MYSQL_DATABASE: opscontrol
+      MYSQL_USER: opscontrol
+      MYSQL_PASSWORD: opscontrol_secret
+      MYSQL_ROOT_PASSWORD: root_secret
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: ../docker/php/Dockerfile
+    container_name: opscontrol-backend
+    working_dir: /var/www
+    volumes:
+      - ./backend:/var/www
+    environment:
+      - DB_CONNECTION=mysql
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_DATABASE=opscontrol
+      - DB_USERNAME=opscontrol
+      - DB_PASSWORD=opscontrol_secret
+    depends_on:
+      mysql:
+        condition: service_healthy
+    command: >
+      sh -c "
+        cp .env.example .env &&
+        php artisan key:generate --force &&
+        composer install --no-interaction --optimize-autoloader &&
+        php artisan migrate:fresh --seed --force &&
+        php-fpm
+      "
+
+  nginx:
+    image: nginx:alpine
+    container_name: opscontrol-nginx
+    ports:
+      - "8000:80"
+    volumes:
+      - ./backend:/var/www
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - backend
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../docker/node/Dockerfile
+    container_name: opscontrol-frontend
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:8000/api
+    command: npm run dev -- --host
+
+volumes:
+  mysql_data:
